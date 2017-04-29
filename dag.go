@@ -9,6 +9,7 @@ type Dag struct {
 	root *Node
 	nodes map[string]*Node
 	state State
+	logger Logger
 }
 
 type DagFlowStatus int
@@ -22,16 +23,27 @@ const (
 )
 
 
-func NewDag(name string, state State) *Dag {
+func NewDag(name string, state State, logger Logger) *Dag {
 	root := NewNode(name, new(NoopOperator), true, true, 0)
 	root.Status = SUCCESS
+	if logger == nil {
+		logger = NewDefaultLogger(DEBUG, fmt.Sprintf("%s: ", name))
+	}
+
 	dag := &Dag{
 		root: root,
 		nodes: make(map[string]*Node),
 		state: state,
+		logger: logger,
 	}
 	dag.nodes[name] = root
+	logger.Debugf("New DAG `%s` Created", name)
+
 	return dag
+}
+
+func (dag *Dag) Name() string {
+	return dag.root.Name
 }
 
 func (dag *Dag) NumOfNodes() int {
@@ -49,6 +61,9 @@ func (dag *Dag) AddChild(parent string, child *Node) {
 func (dag *Dag) AddChildAt(parent string, child *Node, pos int) {
 	dag.nodes[parent].addChildAt(child, pos)
 	dag.nodes[child.Name] = child
+	dag.logger.Infof("Added node %q to node %q at position %d",
+		child.Name, parent, pos)
+
 }
 
 func (dag *Dag) AddDag(parent string, child *Dag) {
@@ -120,28 +135,20 @@ func (solver *dagSolver) Solve() error {
 	solver.completed = append(solver.completed, dag.root)
 	go solver.work()
 	go solver.solveChildren(dag.root)
+
 	for len(solver.completed) < dag.NumOfNodes() {
-		select {
-		case <- solver.exit:
-			solver.status = FAILED
-			break
-
-		case name := <- solver.completionStatus:
-			node := solver.dag.nodes[name]
-			if node.CanSolveChildren() {
-				solver.completed = append(solver.completed, node)
-				go solver.solveChildren(node)
-			} else if node.Status == FAILED && node.Required {
-				solver.exit <- 0
-			}
-			break
+		name := <- solver.completionStatus
+		node := solver.dag.nodes[name]
+		if node.CanSolveChildren() {
+			solver.completed = append(solver.completed, node)
+			go solver.solveChildren(node)
+		} else if node.Status == FAILED && node.Required {
+			solver.dag.logger.Info("Stopping DAG solver as one node failed: ", node.Name)
+			solver.exit <- 0
+			return errors.Wrap(node.Err, "Failed to Solve the DAG")
 		}
 
-		if solver.status == FAILED {
-			break
-		}
 	}
-	solver.exit <- 0
 	return nil
 }
 
@@ -160,11 +167,14 @@ func (solver *dagSolver) work() {
 		select {
 		case <- solver.exit:
 			done = true
+			fmt.Println("Worker Goroutine is stopping as got exit signal ")
 			break
 
 		case task:= <- solver.queue:
 			go func(){
-				task.node.Solve(solver.dag.state)
+				solver.dag.logger.Infof("Solving Node %s", task.node.Name)
+				task.node.Solve(solver.dag.state, solver.dag.logger)
+				solver.dag.logger.Infof("Completed Node %s, status: %d", task.node.Name, task.node.Status)
 				solver.completionStatus <- task.node.Name
 			}()
 			break

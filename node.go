@@ -54,8 +54,8 @@ func (node* Node) CanSolveChildren() bool {
 		(node.Status == FAILED && !node.Required && node.ContinueOnErr)
 }
 
-func (node *Node) Solve(state State) error {
-	err := node.Operator.Run(state)
+func (node *Node) Solve(state State, logger Logger) error {
+	err := node.Operator.Run(state, logger)
 	if err != nil {
 		node.Status = FAILED
 		node.Err = err

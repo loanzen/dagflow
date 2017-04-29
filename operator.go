@@ -9,20 +9,20 @@ import (
 
 
 type Operator interface {
-	Run(State) error
+	Run(State, Logger) error
 }
 
 
 type NoopOperator struct {}
 
-func (op *NoopOperator) Run(state State) error { return nil }
+func (op *NoopOperator) Run(state State, logger Logger) error { return nil }
 
 
 type CmdOperator struct {
 	cmd *exec.Cmd
 }
 
-func (op *CmdOperator) Run(state State) error {
+func (op *CmdOperator) Run(state State, logger Logger) error {
 	env := os.Environ()
 
 	for tup := range state.Iter() {
@@ -34,11 +34,9 @@ func (op *CmdOperator) Run(state State) error {
 	return op.cmd.Run()
 }
 
-type GoFuncOperator struct {
-	Inputs []interface{}
-	Func func(State, []interface{}) error
+type GoFuncOperator func(State, Logger) error
+
+func (f GoFuncOperator) Run(state State, logger Logger) error {
+	return f(state, logger)
 }
 
-func (op *GoFuncOperator) Run(state State) error {
-	return op.Func(state, op.Inputs)
-}
